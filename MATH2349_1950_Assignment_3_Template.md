@@ -12,6 +12,7 @@ Adam Pirsl S3815427
 library(readr)
 #library(xlsx)
 library(readxl)
+library(foreign)
 library(gdata)
 #library(rvst)
 library(dplyr)
