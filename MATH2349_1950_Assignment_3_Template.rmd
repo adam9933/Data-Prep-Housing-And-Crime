@@ -1,0 +1,335 @@
+---
+title: "Data Wrangling In R | Housing and Crime Data Sets"
+author: "Adam Pirsl S3815427"
+output:
+   rmarkdown::github_document:
+   number_sections: true
+   keep_md: true
+header-includes:
+   - \usepackage{subfig}
+   - \usepackage{caption}
+
+---
+
+# Required packages 
+```{r,warning=FALSE,message=FALSE}
+library(readr)
+#library(xlsx)
+library(readxl)
+library(foreign)
+library(gdata)
+#library(rvst)
+library(dplyr)
+library(tidyr)
+library(deductive)
+library(deducorrect)
+library(editrules)
+library(validate)
+library(Hmisc)
+library(forecast)
+library(stringr)
+library(lubridate)
+library(car)
+library(outliers)
+library(MVN)
+library(MASS)
+library(caret)
+library(mlr)
+library(ggplot2)
+library(knitr)
+library(magrittr)
+
+setwd("~/Documents/RMIT/Archive/Data Preprocessing/Assessments/Assignment 3")
+
+```
+# Executive Summary 
+The purpose of this report is to analyse Melbourne Housing data against Victorian crime statistics. The datasets have been taken from Kaggle and Crime Statistics Victoria, both of which hold Creative Common licenses. Data wrangling techniques have been applied to the datasets such as scanning for nulls, scanning for outliers, tidy data techniques, joining data sets together, mutating variables and transforming the final output to better understand the results.
+
+The first step was to import and understand the dataset and apply the appropriate format changes to each variable. We then scanned for nulls and found that the Melbourne Housing data contained NA values under the Price variable. They were treated by applying an median value based on the equivalent Suburb, Room and Type of dwelling. For each NA value that could not be grouped by at least 2 of these variables was removed. The same process was repeated for Landsize. A function rule was also employed to detect abnormalities in the data, such as postcodes with negative inputs or postcodes that fall outside of Victoria, of which no values were detected.
+
+The next step was to identify and treat outliers under the Distance variable by Regionname on a boxplot. There were obvious outliers that were treated using Windsoring. The price variable was assesed using the z-score approach and outliers replaced with an average. A case study into the Mahalanob distance distance was conducted on the suburb of East Melbourne, however the outliers were not removed due to the Price variable already being treated.
+
+The data sets were merged using a left join on the postcode. It was concluded that the final output was in a tidy format as it adhered to the tidy data principles. A new variable called Percentage_Postcode was mutated by calculating the percentage of each type of Offence Division against the total number of offenses for that postcode.
+
+Lastly, the Offense Division variable underwent transformation to further understand trends in the data. A base histogram of the Offense Type A showed a right skew. After applying log and log10 transformations, the intensity of the Offense Type became more normalised. A boxcox transformation was applied to the Price variable of Northern Metropolitan region, which found the data to be slightly left skewed and the median at approximately 2.535 mark.
+
+# Data 
+The Melbourne Housing Market dataset has been sourced from Kaggle.com. The data set contains housing metrics from dwellings sold in Melbourne between January 2016 and March 2018. The dataset was obtained in csv format. Metrics include location data such as postcode, suburb and address of the sold dwelling, as well as dwelling specific data such as number of rooms/bedrooms/parking, land size and building area. 
+
+The Criminal Incidents data set was sourced from Crime Statistics Victoria. The data set contains volumes of criminal incidents recorded in each postcode of Victoria between June 2009 and June 2018. The dataset was obtained in xlsx format. The type of criminal incidents are broken up into 6 categories under the 'Offence Divisions' variable. For each category, the data is further segmented into different subdivisions and subgroups. The right-most varible called 'Incidents Recorded' contains a count of that particular offence. 
+
+Firstly, we have assigned the working directory to a local drive. We have used readr library to import the Melbourne Housing dataset and then provided a snapshot of the data using the head() function in order to assess the type of variables. We have isolated the neccessary variables for our analysis using dplyer select() function. 
+
+We have then imported the Crime Statistics Victoria datset using the readexcel library and providing a snapshot of the dataset using the head() function.
+```{r}
+setwd("~/Documents/RMIT/Archive/Data Preprocessing/Assessments/Assignment 3")
+
+                          # Import housing dataset
+# https://www.kaggle.com/anthonypino/melbourne-housing-market/
+Melbourne_housing <- read_csv("Melbourne_housing_FULL.csv")
+#Trim variables
+Melbourne_housing <-  Melbourne_housing %>%  dplyr::select(Suburb,	Rooms,	Type,	Price, Date, Distance, Postcode, Regionname,	Landsize) 
+head(Melbourne_housing)
+                          # Import crime data set
+# https://www.crimestatistics.vic.gov.au/crime-statisticshistorical-crime-datayear-ending-30-june-2018/download-data
+criminal_data <- read_excel("Data_tables_Criminal_Incidents_Visualisation_year_ending_June_2018.xlsx", 
+     sheet = "Table 07")
+criminal_data <- criminal_data %>% filter(`Year ending June` == 2018)
+head(criminal_data)
+```
+# Understand 
+By applying the Str() function to our datasets, we are able to view the attributes and formats of the variables. 
+
+The Postcode variable in the Melbourne Housing data set is in a character format and in the Criminal dataset it is in numeric. As we will be joining the dataset on postcodes, we have converted the postcode from character to integer format to facilitate the join. The Date format has been updated to dd-dd-yyy format using the as.Date function. This will assist with extract the specific days, months and year metrics if needed. The Type variable was updated to be a factor variable using lapply. 
+
+Criminal Data:
+The offense Division variable was converted from a character to an ordered factor and the naming convention was updated. The levels functionality was included to indicate the severity the offence type. The Postcode and Date Ending June variables were updated and applied to the dataset using lapply. To ensure the format changes have taken place, the str() function was applied to the final outputs and results assessed.
+```{r}
+                        # Summarise the Housing data
+str(Melbourne_housing)
+# Change the postcode to a integer in order to allow a join onto criminal dataset
+convert_to_integer <- Melbourne_housing[, c(7)]
+Melbourne_housing[, c(7)] <- lapply(convert_to_integer, as.integer)
+# Change date format
+convert_to_date <- Melbourne_housing[, c(5)]
+Melbourne_housing[, c(5)] <- lapply(convert_to_date, as.Date, "%d/%m/%y")
+head(Melbourne_housing)
+# Change Type to factor
+convert_to_factor <- Melbourne_housing[,c(3)]
+Melbourne_housing[, c(3)]<- lapply(convert_to_factor, factor)
+# Change Rooms to integer
+convert_to_integer <- Melbourne_housing[, c(2)]
+Melbourne_housing[, c(2)] <- lapply(convert_to_integer, as.integer)
+
+head(Melbourne_housing)
+
+                          # Summarise the Criminal Data
+str(criminal_data)
+# Change offense division to factor with levels
+convert_to_factor <- criminal_data[,c(4)]
+str(criminal_data$`Offence Division`)
+criminal_data[,c(4)] <- lapply(convert_to_factor, factor, 
+                                    levels = c(
+                            'A Crimes against the person', 
+                            'B Property and deception offences', 
+                            'C Drug offences', 
+                            'D Public order and security offences', 
+                            'E Justice procedures offences',
+                            'F Other offences'
+                                            ),
+                                    labels = c(
+                            'A Crimes against the person' = 'A - Person', 
+                            'B Property and deception offences' = 'B - Deception', 
+                            'C Drug offences' = 'C - Drug', 
+                            'D Public order and security offences' = 'D - Security',
+                            'E Justice procedures offences' = 'E - Justice', 
+                            'F Other offences' = 'F - Other'),
+                                    order = TRUE
+                                            )
+
+# Change postcode to integer
+convert_to_integer <- criminal_data[, c(2)]
+criminal_data[, c(2)] <- lapply(convert_to_integer, as.integer)
+
+# Change `Year ending June` to integer
+convert_to_integer <- criminal_data[, c(1)]
+criminal_data[, c(1)] <- lapply(convert_to_integer, as.integer)
+
+head(criminal_data)
+str(Melbourne_housing)
+str(criminal_data)
+
+
+```
+#	Scan I 
+Firstly, we have used the colSum(is.na) method to identify where there are NA values in each dataset. Using the colSum() function, we were able to identify the sum of all nulls under each variable. We identified 7,610 and 11,809 NA's under Melbourne Housing Price and Landsize respectively. 
+
+The NA values under Price were dealt with using median values for similar properties grouped by Suburb, Room and Type. After checking the NA's using colSum(), we identified that there were still 205 NA values. This was due to limited data observations being available to calculate median where Rooms value is high. We have removed Rooms from the group_by function to calculate the median by Suburb and Type, which would still provide an accurate representation of dwelling prices. The remaining NA values were removed from the dataset.  The NA's under Landsize were dealt with using mean values for Landsize grouped by Suburb, Room and Type. The remaining NA's were removed from the dataset. This method was used as it is it aligns to real methods used by real estate agents for sestimations.
+
+Furthermore, we have tested for infinite values using is.specialorNA function that is assigned to an function(x). The output reports no infinite values for Melbourne Housing and Criminal dataset.
+
+The final method was to create a set of rules to validate Price values were greater than 0 and that postcodes were limited to Victoria.
+```{r}
+                                              # Housing Data Set
+# Identify which ones are NA cells
+which(is.na(Melbourne_housing)) %>%  head()
+# Identify how many NA's under each variable
+pre <- colSums(is.na(Melbourne_housing))
+head(pre,9)
+
+# Median values for price 
+    # Median by Suburb,Rooms,Type
+    Melbourne_housing <- Melbourne_housing %>% group_by(Suburb,Rooms,Type) %>%
+    mutate(Price=ifelse(is.na(Price),median(Price,na.rm=TRUE),Price))
+    # Median by Suburb,Type
+    Melbourne_housing <- Melbourne_housing %>% group_by(Suburb,Type) %>%
+    mutate(Price=ifelse(is.na(Price),median(Price,na.rm=TRUE),Price))
+    # Remove remaining NA values
+      Melbourne_housing$Price[is.na(Melbourne_housing$Price)] <-        mean(Melbourne_housing$Price, na.rm = TRUE)
+
+# Average house value for Landsize
+    # Average by Suburb,Rooms,Type
+    Melbourne_housing <- Melbourne_housing %>% group_by(Suburb,Rooms,Type) %>%
+    mutate(Landsize=ifelse(is.na(Landsize),mean(Landsize,na.rm=TRUE),Landsize))
+    # Average by Suburb,Rooms
+    Melbourne_housing <- Melbourne_housing %>% group_by(Suburb,Type) %>%
+    mutate(Landsize=ifelse(is.na(Landsize),mean(Landsize,na.rm=TRUE),Landsize))
+    # Average by Suburb
+    Melbourne_housing <- Melbourne_housing %>% group_by(Suburb) %>%
+    mutate(Landsize=ifelse(is.na(Landsize),mean(Landsize,na.rm=TRUE),Landsize))  
+    # Remove remaining NA values
+    Melbourne_housing$Landsize[is.na(Melbourne_housing$Landsize)] <- mean(Melbourne_housing$Landsize, na.rm = TRUE)
+    
+# Confirm there are no more NA values
+post <- colSums(is.na(Melbourne_housing))
+head(post,9)
+
+# Check for finite and infinite values
+is.specialorNA <- function(x){
+if (is.numeric(x)) (is.infinite(x) | is.nan(x) | is.na(x))
+}
+sapply(Melbourne_housing, function(x) sum(is.infinite(x)))
+
+# Make sure ther are no negative values in Prices
+Home_Rules <- editset(c("Price > 0",
+                        "Landsize >= 0",
+                        "Distance >= 0",
+                        "Postcode > 0"))
+violated_home <- violatedEdits(Home_Rules, Melbourne_housing)
+head(summary(violated_home))
+head(Melbourne_housing)
+
+                                        # Criminal dataset
+
+# Identify which ones are NA cells
+which(is.na(criminal_data)) %>%  head()
+# Identify how many NA's under each variable
+colSums(is.na(criminal_data))
+
+# Check for finite and infinite values
+special_values <- sum(
+    sapply(criminal_data, function(x) sum(is.infinite(x))),
+    sapply(criminal_data, function(x) sum(is.nan(x))),
+    sapply(criminal_data, function(x) sum(is.na(x)))
+    )
+head(special_values)
+
+# Make sure ther are no negative values in Incidents Recorded
+Criminal_Rules <- editset(c("Postcode > 0",
+                            "Postcode < 3999"))
+violated_criminal <- violatedEdits(Criminal_Rules, criminal_data)
+summary(violated_criminal)
+
+```
+#	Scan II
+The 'Distance' variable was assessed for outliers using a boxplot that is grouped by Regionname. There were obvious outliers that we removed using the capped approach (or Winsoring method). This method involved limiting the values to the upper and lower limits of the boxplot and then reinserting those values back into the main dataset. A new boxplot of the dataset confirms that the outliers were removed successfully.
+
+The price variable was assesed for outliers using the Z-Score approach, where there were 581 values that have a z-score >3. We have handled the outliers by replacing them with average house prices.
+
+We have analysed the Mahalanobis distance of East Melbourne (Landsize, Price and Rooms) for outliers. Although the results show dots past the chi squared value, we have already removed outliers in price and distance and do not need to remove these outliers.
+
+Using a boxplot, it was determined that the criminal dataset has high number of outliers per Offense Division. However, given the high number of 'outliers', any data trasnformation would alter the analysis too much and therefore no changes were made to this variable.
+```{r}
+                                # Outliers in Housing Data
+## Distance
+# Test for outliers
+Melbourne_housing_test <-boxplot(Melbourne_housing$Distance ~ Melbourne_housing$Regionname, main="Box Plot - Distance", xlab="Distance",horizontal=TRUE, ylab = "Region",col = "skyblue")
+
+# 1
+cap <- function(x){
+    quantiles <- quantile( x, c(.05, 0.25, 0.75, .95 ) )
+    x[ x < quantiles[2] - 1.5*IQR(x) ] <- quantiles[1]
+    x[ x > quantiles[3] + 1.5*IQR(x) ] <- quantiles[4]
+    x              } 
+
+# 2
+no_outliers <- as.data.frame(Melbourne_housing$Distance) %>%
+  group_by(Melbourne_housing$Regionname) %>%
+  mutate_all(cap)
+
+# 3
+Melbourne_housing[,c(6)] <- sapply(no_outliers$`Melbourne_housing$Distance`, FUN = cap)
+
+# Confirm the outliers are removed
+Melbourne_housing_test2 <-boxplot(Melbourne_housing$Distance ~ Melbourne_housing$Regionname, main="Box Plot - Distance Capped", xlab="Distance",horizontal=TRUE, ylab = "Region",col = "skyblue")
+
+## Price
+# Assign z score
+z.scores <- Melbourne_housing$Price %>%  scores(type = "z")
+      # Summary
+      z.scores %>% summary()
+      # Count
+      length (which( abs(z.scores) >3 ))
+# Input average prices
+Melbourne_housing$Price[ which( abs(z.scores) >3 )] <- mean(Melbourne_housing$Price, na.rm = TRUE)
+head(Melbourne_housing)
+
+## Landsize
+landsizetest <- as.data.frame(Melbourne_housing) %>%  filter( Suburb == "East Melbourne" ) %>% dplyr::select(Landsize, Price, Rooms)
+results <- mvn(data = landsizetest[,c(2:3)], multivariateOutlierMethod = "quan", showOutliers = TRUE)
+results$multivariateOutliers
+
+                                # Outliers in Criminal Data
+
+str(criminal_data)
+# Incidents Recorded
+Criminal_test2 <- boxplot(criminal_data$`Incidents Recorded` ~ criminal_data$`Offence Division`, main="Box Plot - Incidents Recorded", xlab="Records",horizontal=FALSE,col = "skyblue", ylim = (c(0,50)))
+
+```
+#	Tidy & Manipulate Data I 
+In this step, the cleaned datasets were joined together using a left join on the Postcode variable. An review of the output data indicates shows that all variables have their own column, each observation has its own row and each value has its own cell, thus the data is in tidy format. It is noted that the Date components are all under one variable. For the purpose of this analysis, we have left the date in this messy format.
+```{r}
+# Join crime data to the Melbourne housing data
+Housing_and_Crime <- Melbourne_housing %>% left_join(criminal_data, by = "Postcode")
+head(Housing_and_Crime)
+```
+#	Tidy & Manipulate Data II 
+A left join is used to join the crime data onto the housing dataset. The join was completed in this way because we want to understand the crime statistics associated with each suburb.
+
+A new variable was added to the dataset called Percentage_Postcode. This variable was calculated by creating a series of staging tables, by first summing the number of Incidents Recorded by Postcode and Offense Division, and then sum the number of Incidents Recorded by postcode in the next table. These new calculations/tables were joined together using a left join on Postcode. At this point, the new variable 'Percentage_Postcode' was created on the staging dataset using the mutate() function. The newly created data was joined back to the main dataset by the Postcode variable and Offence Division.
+```{r}
+# Calculate percentage of Offense Divsion by postcode
+criminal_group <- Housing_and_Crime %>% group_by(`Postcode`,`Offence Division`) %>% summarise(Total_Incidents = sum(`Incidents Recorded`, na.rm = TRUE))
+
+criminal_group2 <- criminal_group %>% group_by(`Postcode`) %>% summarise(Sum_Incidents_Postcode = sum(`Total_Incidents`, na.rm = TRUE))
+
+criminal_group3 <- criminal_group %>%  left_join(criminal_group2, by = "Postcode")
+
+criminal_percentage <- criminal_group3 %>% 
+        mutate(Percentage_Postcode = Total_Incidents / Sum_Incidents_Postcode) 
+head(criminal_percentage)
+
+criminal_trim <- criminal_percentage %>% dplyr::select(Postcode, `Offence Division`, `Percentage_Postcode`)
+
+# Rejoin to main dataset
+Housing_and_Crime2  <- Housing_and_Crime %>%  left_join(criminal_trim, by = c('Postcode' = 'Postcode', 'Offence Division' = 'Offence Division'))
+head(Housing_and_Crime2)
+```
+#	Transform 
+The Offense Division variable underwent transformation to further understand trends in the data. A base histogram of the Offense Type A showed a right skew. After applying log and log10 transformations, the intensity of the Offense Type became more normalised. A boxcox transformation was applied to the Price variable of Northern Metropolitan region, which found the data to be slightly left skewed and the median at approximately 2.535 mark.
+```{r}
+#1 Incidents Recorded - base histogram
+filter_data_crime <- Housing_and_Crime2 %>% dplyr::distinct(Regionname, Suburb,`Offence Division`, `Incidents Recorded` ) %>%  dplyr::filter(`Offence Division` == 'A - Person')
+
+filter_data_crime$`Incidents Recorded` %>%  hist(col="blue",xlim=c(0,110), main="Histogram - Incidents Recorded - Offense Division A", breaks = 500)
+# LOG10
+log_filter_data_crime <- log10(filter_data_crime$`Incidents Recorded`)
+hist(log_filter_data_crime,col="blue",xlim=c(0,3), main="Histogram - LOG 10 - Offense Division A", breaks = 15)
+
+# LOG
+ln_filter_data_crime <- log(filter_data_crime$`Incidents Recorded`)
+hist(ln_filter_data_crime,col="blue",xlim=c(0,7), main="Histogram - Natural LOG - Offense Division A", breaks = 15)
+
+# 2 Price - base histogram
+filter_data_price <- Housing_and_Crime2 %>% dplyr::distinct(Regionname, Suburb, Price) %>%  dplyr::filter(`Regionname` == 'Northern Metropolitan')
+
+Price2 <- as.numeric(filter_data_price$Price)
+hist(Price2,col="grey",xlim=c(0,3000000), xlab="", main="Histogram - Northern Metropolitan Prices", breaks = 20 )
+
+# Boxcox
+bc_filter_data_price <- BoxCox(Price2,lambda = "auto")
+
+hist(bc_filter_data_price,col="grey",xlim=c(2.51,2.54), xlab="", main="BoxCox - Northern Metropolitan Prices", breaks = 20 )
+```
+<br>
+<br>
